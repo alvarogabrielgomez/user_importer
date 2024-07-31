@@ -40,10 +40,12 @@ async function init() {
 async function processCaptains() {
   await readLineByLineCSV("./capitanes.csv",
   async (line, currentLine, linesNumber) => {
+    // if(currentLine < 140) return;
     // jump first line
-    if (currentLine === 1) return;
+    // if (currentLine === 1) return;
     // jump empty lines
     if (line === "") return;
+    line = line.replaceAll("NULL", "")
 
     // Initial message
     buildProcessingUsersMessage(currentLine, linesNumber);
@@ -54,32 +56,59 @@ async function processCaptains() {
 
     // Splitting CSV Line, respecting commas inside quotes
     const regx = RegExp(',' + "(?=(?:[^\"]*\"[^\"]*\")*(?![^\"]*\"))"); 
-    const lineData = line.split(regx);
+    const lineDataRaw = line.split(regx);
+    const social_ig = makeSocialIG(lineDataRaw[5])
+    const username = await makeLogtoUsername(social_ig, `${lineDataRaw[1]} ${lineDataRaw[2]}`);
+    let userData = {
+      username: username,
+      email: lineDataRaw[0].replaceAll("\"", "").replaceAll(" ", "").replaceAll("\n", "").replaceAll("\'", ""),
+      telefono: lineDataRaw[4],
+      nombre_autor: lineDataRaw[5].replaceAll("\"", "").replaceAll("\n", "").replaceAll("\'", "").trim(),
+      nombres: lineDataRaw[1].replaceAll("\"", "").replaceAll("\n", "").replaceAll("\'", "").trim(),
+      apellidos: lineDataRaw[2].replaceAll("\"", "").replaceAll("\n", "").replaceAll("\'", "").trim(),
+      grado: lineDataRaw[6],
+      fecha_nacimiento: lineDataRaw[7].replaceAll("\"", "").replaceAll("\'", ""),
+      id_colegio: lineDataRaw[12].replaceAll("\"", "").replaceAll("\n", "").replaceAll("\'", "").replaceAll(" ", "").trim(),
+      id_wp: lineDataRaw[14].replaceAll("\"", "").replaceAll("\n", "").replaceAll("\'", "").replaceAll(" ", "").trim(),
+      avatar_filename: lineDataRaw[13],
+      nombre_acudiente: lineDataRaw[8].replaceAll("\"", "").replaceAll("\n", "").replaceAll("\'", "").trim(),
+      email_acudiente: lineDataRaw[9].replaceAll("\"", "").replaceAll("\n", "").replaceAll("\'", "").trim(),
+      telefono_acudiente: "",
+    }
+    const userExtras = {
+      social_ig: lineDataRaw[5].replace("@", "").replaceAll("\"", "").replaceAll(" ", "").replaceAll("\n", "").replaceAll("\'", ""),
+      bio_frase: lineDataRaw[10],
+      bio_acercade: lineDataRaw[11],
+    }
 
-    if (!lineData[1]) {
+    if(userData.fecha_nacimiento === "NULL" || userData.fecha_nacimiento === "") {
+      userData.fecha_nacimiento = "0000-00-00";
+    }
+    if(userData.id_colegio === "NULL" || userData.id_colegio === "") {
+      throw new Error(`No se pudo obtener el ID del colegio. Línea ${currentLine}, Nombre ${userData.nombres} ${userData.apellidos}`);
+    }
+    if (!userData.email) {
       console.log(
         chalk.red(
-          `No se pudo obtener el email del usuario. Línea ${currentLine}, Nombre ${lineData[2]} ${lineData[3]}`
+          `No se pudo obtener el email del usuario. Línea ${currentLine}, Nombre ${userData.nombres} ${userData.apellidos}`
         )
       );
       return;
     }
-    const user = {
-      username: validateUsername(lineData[6]) || createNewUsernameUsingEmail(lineData[1]) || await createNewUsernameUsingName(lineData[2]),
+    const newLogtoUser = {
+      username: userData.username,
       password: await logto.generateRandomPassword64(),
-      primaryEmail: lineData[1],
-      name: lineData[2] + " " + lineData[3],
+      primaryEmail: userData.email,
+      name: `${userData.nombres} ${userData.apellidos}`,
       profile: {
-        givingName: lineData[2],
-        familyName: lineData[3],
-        birthdate: lineData[8],
+        givingName: userData.nombres,
+        familyName: userData.apellidos,
       },
       customData: {
-        schoolId: lineData[17],
-        grado: lineData[7],
-        acudiente: lineData[9],
-        frase: lineData[12],
-        aboutMe: lineData[13],
+        schoolId: userData.id_colegio,
+        grado: userData.grado,
+        frase: userExtras.bio_frase,
+        aboutMe: userExtras.bio_acercade,
       },
     };
 
@@ -88,53 +117,35 @@ async function processCaptains() {
     buildProcessingUsersMessage(currentLine, linesNumber, "2");
     // await new Promise(resolve => setTimeout(resolve, 1000));
     // Verify if user already exists
-    const userExists = await logto.searchUserByEmail(user.primaryEmail);
-    let userLogto;
-    if (userExists.length > 0) {
-    userLogto = await logto.updateUser(user, userExists[0].id);
+    const verifyLogtoUserExists = await logto.searchUserByEmail(newLogtoUser.primaryEmail);
+    let savedLogtoUser;
+    if (verifyLogtoUserExists.length > 0) {
+    savedLogtoUser = await logto.updateUser(newLogtoUser, verifyLogtoUserExists[0].id);
     } else {
-      userLogto = await logto.saveUser(user);
+      savedLogtoUser = await logto.saveUser(newLogtoUser);
     }
-    if (!userLogto) throw new Error(`No se pudo guardar el usuario en Logto Line: ${currentLine}`);
-    if(userLogto.data?.issues) {
-      console.error(userLogto.data.issues);
+    if (!savedLogtoUser) throw new Error(`No se pudo guardar el usuario en Logto Line: ${currentLine}`);
+    if(savedLogtoUser.data?.issues) {
+      console.error(savedLogtoUser.data.issues);
       throw new Error(`No se pudo guardar el usuario en Logto Line: ${currentLine}`);
     }
 
     // Assigning Roles to User
     buildProcessingUsersMessage(currentLine, linesNumber, "4");
-    await logto.asignRoleToUser(userLogto.id, 'captain');
+    if(savedLogtoUser.id == null || savedLogtoUser.id == "") {
+      throw new Error(`No se pudo obtener el ID del usuario. Línea ${currentLine}, Nombre ${userData.nombres} ${userData.apellidos}`);
+    }
+    await logto.asignRoleToUser(savedLogtoUser.id, 'captain');
 
     // Updating User ID in Original Database
     buildProcessingUsersMessage(currentLine, linesNumber, "3");
-    const social_ig = lineData[6].replace("@", "");
-    if(currentLine === 18) {
-      console.log(user);
-    }
+    // if(currentLine === 18) {
+    //   console.log(user);
+    // }
 
     await upsertUser(
-      {
-        userid: userLogto.id,
-        email: user.primaryEmail,
-        telefono: lineData[5],
-        nombre_autor: lineData[4],
-        nombres: lineData[2],
-        apellidos: lineData[3],
-        grado: lineData[7],
-        fecha_nacimiento: lineData[8],
-        id_colegio: lineData[17],
-        id_wp: 0,
-        avatar_filename: lineData[18],
-        nombre_acudiente: lineData[9],
-        telefono_acudiente: lineData[10],
-        email_acudiente: lineData[11],
-      },
-      {
-        social_ig: social_ig,
-        bio_frase: lineData[12],
-        bio_acercade: lineData[13],
-      },
-      userLogto.id
+      userData, userExtras,
+      savedLogtoUser.id
     );
     // Success Message
     buildProcessingUsersMessage(currentLine, linesNumber, "done");
@@ -142,9 +153,22 @@ async function processCaptains() {
 );
 }
 
+function makeSocialIG(rawString) {
+  const step1 = rawString.replaceAll("\"", "").replaceAll("\n", "").replaceAll("\'", "").replaceAll("@", "").trim();
+  const validUsername = validateUsername(step1);
+  return validUsername || null;
+}
+
+async function makeLogtoUsername(rawString, nameOfUser) {
+  const step1 = rawString?.replaceAll("\"", "")?.replaceAll("\n", "")?.replaceAll("\'", "")?.replaceAll("@", "")?.trim();
+  const validUsername = validateUsername(step1);
+  return validUsername || await createNewUsernameUsingName(nameOfUser);
+}
+
 function validateUsername(username) {
-  let usernameTrimmed = ""+username.trim();
-  usernameTrimmed = usernameTrimmed.replace("@", "").replace(".", "").replace("_", "").replace("-", "").replace(",", "");
+  let usernameTrimmed = username?.trim();
+  if(!usernameTrimmed) return null;
+  usernameTrimmed = usernameTrimmed.replaceAll("@", "").replaceAll(".", "").replaceAll("-", "").replaceAll(",", "").replaceAll("NULL", "");
   // Username must be at least 3 characters long
   // Username must not contain spaces, commas, or quotes
   // Username must not contain special characters like @, #, $, %, underscore, etc.
@@ -242,6 +266,12 @@ async function upsertUser(user, userExtras, userId) {
     console.error(
       chalk.red(
         `Error al actualizar usuario en base de datos de 500H. \n\n${error}`
+      )
+    );
+
+        console.error(
+      chalk.red(
+        `${user.toString()} \n\n ${userExtras.toString()} \n\n ${userId.toString()}`
       )
     );
     process.exit(1);

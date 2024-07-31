@@ -117,7 +117,9 @@ export default class LogtoService {
   }
 
   asignRoleToUser(userId, roleName) {
-    if (!userId) throw new Error("userId is required");
+    if (!userId) {
+      throw new Error("userId is required");
+    } 
     // Verify if the role exists in the rolesAvailables
     const role = this.rolesAvailables.find((role) => role.name === roleName);
     if (!role) {
